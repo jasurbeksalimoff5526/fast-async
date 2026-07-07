@@ -91,7 +91,11 @@ async def refresh_access_token(data: RefreshTokenRequest, db: AsyncSession = Dep
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token yaroqsiz yoki muddati o'tgan",
         )
-
+    # eski refreshni blacklistga qo‘shish
+    db.add(BlackList(
+        refresh=data.refresh_token,
+        exp=datetime.fromtimestamp(payload.get('exp'))
+    ))
     user_id = payload.get("sub")
     token_payload = {"sub": str(user_id)}
     new_access_token = create_access_token(token_payload)
@@ -133,8 +137,11 @@ async def get_me(current_user: User = Depends(get_current_user)):
 async def update_profile(new_data: ChangeProfileSchema, current_user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
     data = new_data.model_dump(exclude_unset=True)
-    for key, value in data.items():
-        setattr(current_user, key, value)
+    allowed_fields = ["username", "email"]
+
+    for key in allowed_fields:
+        if key in data:
+            setattr(current_user, key, data[key])
 
     await db.commit()
     await db.refresh(current_user)
@@ -166,8 +173,8 @@ async def change_password(new_data: PasswordChangeSchema, current_user: User = D
 async def logout(data: LogoutSchema, db: AsyncSession = Depends(get_db), _: None = Depends(is_authenticated)):
     payload = decode_token(data.refresh)
 
-    type = payload.get('type')
-    if type is None or type != 'refresh':
+    token_type = payload.get('type')
+    if token_type is None or token_type != 'refresh':
         raise HTTPException(detail='Refresh is not valid', status_code=status.HTTP_400_BAD_REQUEST)
 
     refresh_token = await db.execute(select(BlackList).where(BlackList.refresh == data.refresh))
